@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "gstuff"
+version = "0.1.0"
+description = ""
+authors = ["geek <geek@axis13.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+google-auth-oauthlib = "^1.0.0"
+google-api-python-client = "^2.94.0"
+jupyter = "^1.0.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
