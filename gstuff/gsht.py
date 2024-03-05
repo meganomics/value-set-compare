@@ -1,6 +1,7 @@
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import logging
+import time
 
 
 logger = logging.getLogger(__name__)
@@ -85,9 +86,13 @@ class Workbook:
             metadata = self.service.spreadsheets().get(spreadsheetId=self.file_id).execute()
             self.name = metadata.get('properties', '').get('title', '')
             sheets = metadata.get('sheets', [])
-            for sheet in sheets:
+            for count, sheet in enumerate(sheets, start=1):
                 sheet_properties = sheet.get('properties', {})
                 sheet_title = sheet_properties.get('title')
+                #if count == 61:
+                #    print("Reached 60 sheets, waiting a minute.")
+                #    time.sleep(60)
+                #print(str(count)+". CURRENT SHEET IS "+sheet_title)
                 self.sheets[sheet_title] = Sheet(self, sheet_title)
         except HttpError as error:
             logger.error(f'An error occurred while initializing Workbook: {error}')

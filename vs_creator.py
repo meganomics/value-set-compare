@@ -2,6 +2,7 @@ from gstuff.gdrv import Drive
 from gstuff.gsht import GSManager
 from gstuff.gsht import Sheet
 import googlesheetssettings as gss
+import time
 
 # defining constants
 dv_header_rows = 2
@@ -13,7 +14,7 @@ dv_metadata_cols = 2
 def get_metadata(sheet):
     metadata_labels = []
     metadata_values = []
-    for i in range(dv_header_rows, sheet.rows):
+    for i in range(dv_header_rows, min(sheet.rows,10)):
         if sheet.values[i][0] != '':
             metadata_labels.append(sheet.values[i][0])
             metadata_values.append(sheet.values[i][1])
@@ -42,10 +43,10 @@ def get_sheet_headers(sheet):
 
 # given a particular value, return a list of the indices of all columns whose headers contain that value
 
-def get_col_numbers(dict, sheet, system):
-    sheet_headers = get_sheet_headers(sheet)
-    col_numbers = find_indices(sheet_headers, dict[system][0])
-    return col_numbers
+#def get_col_numbers(dict, sheet, system):
+#    sheet_headers = get_sheet_headers(sheet)
+#    col_numbers = find_indices(sheet_headers, dict[system][0])
+#    return col_numbers
 
 def find_indices(list, item):
     indices = []
@@ -62,17 +63,31 @@ def get_codelists(code_cols, sheet, code_dict):
     for col in code_cols:
         if first_row[col] != '':
             for key in code_dict.keys():
-                #if key != 'name':
                 column_pairs = code_dict[key][3]
                 if col in column_pairs:
-                    codes = list(list(x) for x in zip(sheet.get_col(column_pairs[1]),sheet.get_col(column_pairs[0])))[2:]
+                    col1 = [sci_to_code(newline_strip(x)) for x in sheet.get_col(column_pairs[1])][2:]
+                    col2 = [sci_to_code(newline_strip(x)) for x in sheet.get_col(column_pairs[0])][2:]
+                    codes = [list(x) for x in list(set(zip(col1, col2)))] #set is to remove duplicates
                     system_code_pair_dict[key] = codes
     return system_code_pair_dict
+
+def sci_to_code(code):
+    """ convert codes in scientific notation in the Google sheet back into codes """
+    if 'E+' in code:
+        base, exp = code.split("E+")
+        newcode = str(int(float(base+'e'+exp)))
+        return newcode
+    else:
+        return code
     
+def newline_strip(label):
+    label2 = label.replace("\n", " ")
+    return label2
 
-# create a subset value set
 
-def create_subset_vs(sheet, cont_vals):
+# create a grouping value set
+
+def create_grouping_vs(sheet, cont_vals):
     metadata = get_metadata(sheet) #a  dictionary
     filename = metadata['Filename']
     metadata.update({'Content Type':'subsets'})
@@ -81,6 +96,8 @@ def create_subset_vs(sheet, cont_vals):
     gsm = GSManager(drive.credentials) 
     value_set = gsm.create_vs_workbook(filename, 'subsets', desc_vals, cont_vals)
     drive.move(value_set.file_id, None, gss.STAGING_FOLDER_ID)
+    print("Created grouping vs "+filename)
+#    time.sleep(1)
 
 
 # create filename labels appropriate for concept value sets (i.e. "Covid-19_Dx (ICD-10-CM)")
@@ -94,7 +111,8 @@ def update_filename_label(dict, metadata, system):
     return metadata
 
 
-# create concept value set for any system besides generic drug
+# create concept value set for any system besides ICD-10 (where intensional
+# defs exist), DMD/PID, generic drugs
 
 def create_concept_vs(sheet, system_dict, system, code_pairs):
     metadata = get_metadata(sheet) #a dictionary
@@ -105,7 +123,7 @@ def create_concept_vs(sheet, system_dict, system, code_pairs):
     updated_metadata.update({'Content Type':system_dict[system][4]})
     desc_vals = list(map(list, updated_metadata.items()))[1:]
     cont_vals = [['Label', 'Code', 'System', 'Note']]
-    for i in range(len(code_pairs)-1):
+    for i in range(len(code_pairs)):
         code_pair = code_pairs[i]
         if code_pair[0] != '' or code_pair[1] != '':
             code_pair.append(system_dict[system][2])
@@ -115,6 +133,61 @@ def create_concept_vs(sheet, system_dict, system, code_pairs):
     gsm = GSManager(drive.credentials)
     value_set = gsm.create_vs_workbook(filename, 'concepts', desc_vals, cont_vals)
     drive.move(value_set.file_id, None, gss.STAGING_FOLDER_ID)
+    print("Created concept vs "+filename)
+#    time.sleep(1)
+    return filename,label
+
+
+# create concept value set for ICD-10 (where intensional defs exist)
+
+def create_icd_intensional_vs(sheet, system_dict, system, code_pairs):
+    metadata = get_metadata(sheet) #a dictionary
+    updated_metadata = update_filename_label(system_dict, metadata, system)
+
+    filename = updated_metadata['Filename']
+    label = updated_metadata['Label']
+    updated_metadata.update({'Content Type':system_dict[system][4]})
+    intents = system_dict[system][2]+': '
+    for i in range(len(code_pairs)):
+        code_pair = code_pairs[i]
+        if code_pair[1] != '':
+            intents += code_pair[1]+', '
+    intents_stripped = intents.strip(', ')
+    updated_metadata['Intent'] = intents_stripped
+    desc_vals = list(map(list, updated_metadata.items()))[1:]
+    cont_vals = [['Label', 'Code', 'System', 'Note']]
+
+    drive = Drive()
+    gsm = GSManager(drive.credentials)
+    value_set = gsm.create_vs_workbook(filename, 'concepts', desc_vals, cont_vals)
+    drive.move(value_set.file_id, None, gss.INTENSIONAL_FOLDER_ID)
+    print("Created concept vs "+filename+" (INTENSIONAL)")
+#    time.sleep(1)
+    return filename,label
+
+# create concept value set for DMD/DMD PID codelists
+
+def create_dmd_vs(sheet, system_dict, system, code_pairs):
+    metadata = get_metadata(sheet) #a dictionary
+    updated_metadata = update_filename_label(system_dict, metadata, system)
+
+    filename = updated_metadata['Filename']
+    label = updated_metadata['Label']
+    updated_metadata.update({'Content Type':system_dict[system][4]})
+    desc_vals = list(map(list, updated_metadata.items()))[1:]
+    cont_vals = [['Label', 'Code', 'System', 'Note']]
+    for i in range(len(code_pairs)):
+        code_pair = code_pairs[i]
+        if code_pair[1] != '':
+            code_pair.append(system_dict[system][2])
+            cont_vals.append(code_pair)
+
+    drive = Drive()
+    gsm = GSManager(drive.credentials)
+    value_set = gsm.create_vs_workbook(filename, 'concepts', desc_vals, cont_vals)
+    drive.move(value_set.file_id, None, gss.STAGING_FOLDER_ID)
+    print("Created concept vs "+filename)
+#    time.sleep(1)
     return filename,label
 
 
@@ -129,7 +202,7 @@ def create_generic_vs(sheet, system_dict, system, code_pairs):
     updated_metadata.update({'Content Type':system_dict[system][4]})
     desc_vals = list(map(list, updated_metadata.items()))[1:]
     cont_vals = [['Label', 'Code', 'System', 'Note', 'Generic Name', 'Trade Name', 'Category']]
-    for i in range(len(code_pairs)-1):
+    for i in range(len(code_pairs)):
         code_pair = code_pairs[i]
         row = ['','','','','','','']
         if code_pair[0] != '' or code_pair[1] != '':
@@ -142,31 +215,47 @@ def create_generic_vs(sheet, system_dict, system, code_pairs):
     gsm = GSManager(drive.credentials)
     value_set = gsm.create_vs_workbook(filename, 'concepts', desc_vals, cont_vals)
     drive.move(value_set.file_id, None, gss.STAGING_FOLDER_ID)
+    print("Created concept vs "+filename)
+#    time.sleep(1)
     return filename,label
 
 
 def create_value_sets(sheet, code_cols, system_dict):
     """ create concept vs's for each of the codelist systems represented in the given sheet;
-        store their filenames and labels for use in the subset value set, create one 
-        subset vs based on that """
+        store their filenames and labels for use in the grouping value set, create one 
+        grouping vs based on that """
     
     code_pair_dict = get_codelists(code_cols, sheet, system_dict)
-    subset_cont_vals = [['Filename', 'Value Set Label', 'Note']]
+    grouping_cont_vals = [['Filename', 'Value Set Label', 'Note']]
     for system in code_pair_dict:
         if system == 'name':
             name, label = create_generic_vs(sheet, system_dict, system, code_pair_dict[system])
+        elif system == 'dmd_pid':
+            codes = sheet.get_col(10)[2:]
+            if any(code != '' for code in codes):
+                name, label = create_dmd_vs(sheet, system_dict, system, code_pair_dict[system])
+        elif system == 'dmd':
+            codes = sheet.get_col(11)[2:]
+            if any(code != '' for code in codes):
+                name, label = create_dmd_vs(sheet, system_dict, system, code_pair_dict[system])
+        elif system == 'icd':
+            codes = sheet.get_col(2)[2:]
+            if any('.x' in code or '.X' in code for code in codes):
+                name, label = create_icd_intensional_vs(sheet, system_dict, system, code_pair_dict[system])
+            else:
+                name, label = create_concept_vs(sheet, system_dict, system, code_pair_dict[system])
         else:
             name, label = create_concept_vs(sheet, system_dict, system, code_pair_dict[system])
-        subset_cont_val_row = [name, label, '']
-        subset_cont_vals.append(subset_cont_val_row)
-    create_subset_vs(sheet, subset_cont_vals)
+        grouping_cont_val_row = [name, label, '']
+        grouping_cont_vals.append(grouping_cont_val_row)
+    create_grouping_vs(sheet, grouping_cont_vals)
 
 
 def main():
     code_cols = [2, 4, 5, 8, 10, 11, 12, 13]
     system_dict = {
         #'system_type':['header','filename_label','system','columns','concepts or drugs'],
-        'icd':['ICD10',' (ICD-10-CM)','ICD-10-CM',[2,3],'concepts'],
+        'icd':['ICD10',' (ICD-10)','ICD-10',[2,3],'concepts'],
         'medcode':['Medcode',' (MEDCODE)','MEDCODE',[4,7],'concepts'],
         'snomed':['SNOMED',' (SNOMED)','SNOMED',[5,6],'concepts'],
         'opcs':['OPCS',' (OPCS)','OPCS',[8,9],'concepts'],
@@ -181,23 +270,20 @@ def main():
     # create a Google Sheet Manager object
     gsm = GSManager(drive.credentials)
 
-    source_wb = gsm.get_workbook(gss.SOURCE_SHEET_ID)
+    source_wb = gsm.get_workbook(gss.VALUE_SET_11)
+    workbook_name = source_wb.name
+    print(workbook_name+' started.')
 
     tabs = source_wb.get_sheet_names()
 
-    print(len(tabs))
+    for tab in tabs: 
+        working_sheet = source_wb.sheets.get(tab)
+        if working_sheet.cols < 16:
+            working_sheet.write_cell(2,15,'category')
+            working_sheet.save()
+        create_value_sets(working_sheet, code_cols, system_dict)
 
-    #for tab in map(lambda s: f"'{s}'", tabs):   #wraps function names in single quotes -- tab names ending in integer causing problems
-    #    working_sheet = source_wb.sheets.get(tab)
-    #    working_sheet.write_cell(2,15,'category')
-    #    working_sheet.save()
-    #    create_value_sets(working_sheet, code_cols, system_dict)
-
-    #working_sheet = source_wb.sheets.get('covid-19_tx')
-    #create_value_sets(working_sheet,code_cols,system_dict)
-
-    print('Done.')
-
+    print(workbook_name+' done.')
 
 if __name__ == '__main__':
     main()
